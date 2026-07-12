@@ -1,0 +1,49 @@
+/**
+ * Wrangler configuration for the TripIt remote MCP server.
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ *
+ * Stateless MCP via createMcpHandler() — no Durable Objects, no KV.
+ *
+ * Callers supply their own TripIt OAuth 1.0 credentials per-request via the
+ * X-TripIt-* headers — nothing is stored on the server.
+ *
+ * Optional secrets (set with `wrangler secret put <NAME>`, all four required
+ * together), only for a private single-user deployment where callers should
+ * not need to send credentials:
+ *   TRIPIT_CONSUMER_KEY, TRIPIT_CONSUMER_SECRET,
+ *   TRIPIT_ACCESS_TOKEN, TRIPIT_ACCESS_TOKEN_SECRET
+ *
+ * Optional vars (set below or in the dashboard) to restrict who can connect
+ * via Cloudflare Access; while unset the server is public:
+ *   ACCESS_TEAM_DOMAIN  — your Zero Trust team domain, e.g. "myteam"
+ *   ACCESS_APP_AUD      — the Access application's Audience (AUD) tag
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tripit-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-11",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  // Keep the workers.dev URL as a secondary endpoint alongside the route.
+  "workers_dev": true,
+  // mcp.joshuamarble.io is the shared hostname for all MCP servers. The
+  // seats-aero-mcp worker holds the hostname as a Custom Domain; this worker
+  // joins it by claiming the /tripit* route pattern, which takes precedence
+  // over the Custom Domain.
+  "routes": [
+    {
+      "pattern": "mcp.joshuamarble.io/tripit*",
+      "zone_name": "joshuamarble.io"
+    }
+  ],
+  "vars": {
+    // Path of this server's MCP endpoint on the shared hostname.
+    "BASE_PATH": "/tripit"
+    // Uncomment and fill in to require Cloudflare Access (server is public otherwise):
+    // "ACCESS_TEAM_DOMAIN": "myteam",
+    // "ACCESS_APP_AUD": "<aud tag from your Access application>"
+  }
+}

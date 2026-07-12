@@ -1,27 +1,44 @@
 {
   "name": "tripit-mcp",
-  "version": "1.0.0",
-  "description": "TripIt MCP server for Cloudflare Workers",
+  "version": "2.0.0",
+  "description": "Public remote MCP server for the TripIt travel management API on Cloudflare Workers — bring your own OAuth credentials",
   "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "wrangler dev",
+    "start": "wrangler dev",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit",
+    "types": "wrangler types",
+    "check": "tsc --noEmit && tsc -p test --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "authorize": "node scripts/authorize.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "hono": "^4.6.0",
-    "oauth-1.0a": "^2.2.6",
-    "zod": "^3.24.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "agents": "^0.17.3",
+    "jose": "^6.2.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.5.0",
-    "@cloudflare/workers-types": "^4.20241218.0",
-    "@types/node": "^22.10.0",
-    "typescript": "^5.7.0",
-    "vitest": "^2.1.0",
-    "wrangler": "^3.99.0"
+    "@biomejs/biome": "^2.5.3",
+    "@cloudflare/vitest-pool-workers": "^0.18.4",
+    "@types/node": "^26.1.1",
+    "msw": "^2.15.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.110.0"
+  },
+  "allowScripts": {
+    "workerd@1.20260708.1": true,
+    "sharp@0.34.5": true,
+    "core-js-pure@3.49.0": true,
+    "esbuild@0.28.1": true,
+    "msw@2.15.0": true
   }
 }

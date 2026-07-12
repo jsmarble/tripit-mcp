@@ -1,18 +1,13 @@
-import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
+import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+import { defineConfig } from "vitest/config";
 
-export default defineWorkersConfig({
+export default defineConfig({
+  plugins: [
+    cloudflareTest({
+      wrangler: { configPath: "./wrangler.jsonc" },
+    }),
+  ],
   test: {
-    poolOptions: {
-      workers: {
-        wrangler: { configPath: './wrangler.toml' },
-        miniflare: {
-          kvNamespaces: ['TOKENS'],
-          bindings: {
-            TRIPIT_CONSUMER_KEY: 'test-consumer-key',
-            TRIPIT_CONSUMER_SECRET: 'test-consumer-secret',
-          },
-        },
-      },
-    },
+    setupFiles: ["test/setup.ts"],
   },
 });

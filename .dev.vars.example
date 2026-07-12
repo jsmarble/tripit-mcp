@@ -1,0 +1,19 @@
+# Copy to .dev.vars for local development with `wrangler dev`.
+#
+# All values are OPTIONAL. Callers normally supply their own TripIt OAuth
+# credentials per-request via the X-TripIt-* headers, so nothing is stored
+# on the server.
+
+# Optional fallback credentials for a private single-user deployment — all
+# four must be set together. Leave unset for a shared server where every
+# caller sends their own credentials. Mint access tokens once with
+# `npm run authorize -- <consumer_key> <consumer_secret>`.
+# TRIPIT_CONSUMER_KEY=your_consumer_key
+# TRIPIT_CONSUMER_SECRET=your_consumer_secret
+# TRIPIT_ACCESS_TOKEN=your_access_token
+# TRIPIT_ACCESS_TOKEN_SECRET=your_access_token_secret
+
+# Optional: enforce Cloudflare Access JWT validation in the Worker.
+# Leave unset for local development.
+# ACCESS_TEAM_DOMAIN=myteam
+# ACCESS_APP_AUD=your_access_application_aud_tag
