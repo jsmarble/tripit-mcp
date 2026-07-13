@@ -1,5 +1,6 @@
 import { createMcpHandler } from "agents/mcp";
 import { enforceAccess } from "./access";
+import { handleConnect } from "./connect";
 import { buildServer } from "./server";
 import type { TripItCredentials } from "./tripit-client";
 
@@ -15,17 +16,27 @@ const CREDENTIAL_HEADERS = {
   accessTokenSecret: "X-TripIt-Access-Token-Secret",
 } as const;
 
-const CREDENTIAL_HELP =
-  "Send all four TripIt OAuth values as headers: X-TripIt-Consumer-Key, " +
-  "X-TripIt-Consumer-Secret, X-TripIt-Access-Token, X-TripIt-Access-Token-Secret " +
-  "(or a single `Authorization: Bearer <consumer_key>:<consumer_secret>:<access_token>:<access_token_secret>`). " +
-  "Get a consumer key/secret at https://www.tripit.com/developer and mint access " +
-  "tokens once with scripts/authorize.mjs from the repo — they do not expire.";
+function credentialHelp(connectUrl: string): string {
+  return (
+    `Easiest: open ${connectUrl} in a browser, sign in to TripIt, and copy the ` +
+    "credentials it shows you — then send them as the X-TripIt-Access-Token and " +
+    "X-TripIt-Access-Token-Secret headers (or a single `Authorization: Bearer " +
+    "<access_token>:<access_token_secret>`). Advanced: bring your own TripIt API app " +
+    "by sending all four X-TripIt-* headers (or a four-part bearer " +
+    "`<consumer_key>:<consumer_secret>:<access_token>:<access_token_secret>`). " +
+    "TripIt access tokens do not expire."
+  );
+}
 
-type Route = "mcp" | "health" | "index" | null;
+type Route = "mcp" | "health" | "index" | { connectPrefix: string } | null;
 
 function resolveRoute(pathname: string, env: Env): Route {
   const base = env.BASE_PATH?.replace(/\/+$/, "");
+  for (const prefix of [base && `${base}/connect`, "/connect"]) {
+    if (prefix && (pathname === prefix || pathname.startsWith(`${prefix}/`))) {
+      return { connectPrefix: prefix };
+    }
+  }
   if (pathname === LEGACY_MCP_ROUTE || (base && pathname === base)) return "mcp";
   if (pathname === "/health" || (base && pathname === `${base}/health`)) {
     return "health";
@@ -39,13 +50,50 @@ type CredentialResult =
   | { ok: false; message: string };
 
 /**
- * Resolves the caller's TripIt OAuth 1.0 credentials for this request.
- * Callers supply their own four values per-request — nothing is stored
- * server-side. The TRIPIT_* secrets, if all set, are a fallback for private
- * single-user deployments.
+ * Resolves the caller's TripIt OAuth 1.0 credentials for this request —
+ * nothing is stored server-side.
+ *
+ * Two modes:
+ * - Access-token pair only (from the hosted /connect flow): the request is
+ *   signed with this deployment's registered app (TRIPIT_CONSUMER_KEY/SECRET
+ *   secrets).
+ * - Full four values: the caller brings their own TripIt app.
+ *
+ * TRIPIT_ACCESS_TOKEN/SECRET secrets additionally enable a keyless fallback
+ * for private single-user deployments.
  */
-function resolveCredentials(request: Request, env: Env): CredentialResult {
+function resolveCredentials(
+  request: Request,
+  env: Env,
+  connectUrl: string,
+): CredentialResult {
+  const help = credentialHelp(connectUrl);
   const header = (name: string) => request.headers.get(name)?.trim() || undefined;
+  const appKey = env.TRIPIT_CONSUMER_KEY?.trim();
+  const appSecret = env.TRIPIT_CONSUMER_SECRET?.trim();
+
+  const withServerApp = (
+    accessToken: string,
+    accessTokenSecret: string,
+  ): CredentialResult => {
+    if (!appKey || !appSecret) {
+      return {
+        ok: false,
+        message:
+          "This deployment has no registered TripIt app, so access-token-only " +
+          `credentials cannot be used. Send all four X-TripIt-* headers instead. ${help}`,
+      };
+    }
+    return {
+      ok: true,
+      credentials: {
+        consumerKey: appKey,
+        consumerSecret: appSecret,
+        accessToken,
+        accessTokenSecret,
+      },
+    };
+  };
 
   const fromHeaders = {
     consumerKey: header(CREDENTIAL_HEADERS.consumerKey),
@@ -57,6 +105,9 @@ function resolveCredentials(request: Request, env: Env): CredentialResult {
   if (present === 4) {
     return { ok: true, credentials: fromHeaders as TripItCredentials };
   }
+  if (fromHeaders.accessToken && fromHeaders.accessTokenSecret && present === 2) {
+    return withServerApp(fromHeaders.accessToken, fromHeaders.accessTokenSecret);
+  }
   if (present > 0) {
     const missing = (Object.keys(fromHeaders) as (keyof typeof fromHeaders)[]).filter(
       (key) => !fromHeaders[key],
@@ -65,7 +116,7 @@ function resolveCredentials(request: Request, env: Env): CredentialResult {
       ok: false,
       message: `Incomplete TripIt credentials: missing header(s) ${missing
         .map((key) => CREDENTIAL_HEADERS[key])
-        .join(", ")}. ${CREDENTIAL_HELP}`,
+        .join(", ")}. ${help}`,
     };
   }
 
@@ -76,6 +127,9 @@ function resolveCredentials(request: Request, env: Env): CredentialResult {
       .trim()
       .split(":")
       .map((part) => part.trim());
+    if (parts.length === 2 && parts.every(Boolean)) {
+      return withServerApp(parts[0], parts[1]);
+    }
     if (parts.length === 4 && parts.every(Boolean)) {
       return {
         ok: true,
@@ -89,40 +143,41 @@ function resolveCredentials(request: Request, env: Env): CredentialResult {
     }
     return {
       ok: false,
-      message: `The Authorization bearer token must contain exactly four colon-separated values. ${CREDENTIAL_HELP}`,
+      message: `The Authorization bearer token must contain two colon-separated values (access token pair) or four (with your own app's consumer key and secret). ${help}`,
     };
   }
 
-  if (
-    env.TRIPIT_CONSUMER_KEY &&
-    env.TRIPIT_CONSUMER_SECRET &&
-    env.TRIPIT_ACCESS_TOKEN &&
-    env.TRIPIT_ACCESS_TOKEN_SECRET
-  ) {
+  if (appKey && appSecret && env.TRIPIT_ACCESS_TOKEN && env.TRIPIT_ACCESS_TOKEN_SECRET) {
     return {
       ok: true,
       credentials: {
-        consumerKey: env.TRIPIT_CONSUMER_KEY.trim(),
-        consumerSecret: env.TRIPIT_CONSUMER_SECRET.trim(),
+        consumerKey: appKey,
+        consumerSecret: appSecret,
         accessToken: env.TRIPIT_ACCESS_TOKEN.trim(),
         accessTokenSecret: env.TRIPIT_ACCESS_TOKEN_SECRET.trim(),
       },
     };
   }
 
-  return { ok: false, message: `No TripIt credentials provided. ${CREDENTIAL_HELP}` };
+  return { ok: false, message: `No TripIt credentials provided. ${help}` };
 }
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const route = resolveRoute(url.pathname, env);
+    const base = env.BASE_PATH?.replace(/\/+$/, "") ?? "";
+    const connectUrl = `${url.origin}${base}/connect`;
+
+    if (typeof route === "object" && route !== null) {
+      return handleConnect(request, env, route.connectPrefix);
+    }
 
     if (route === "mcp") {
       const denied = await enforceAccess(request, env);
       if (denied) return denied;
 
-      const resolved = resolveCredentials(request, env);
+      const resolved = resolveCredentials(request, env, connectUrl);
       if (!resolved.ok) {
         return Response.json(
           {
@@ -146,6 +201,7 @@ export default {
         status: "ok",
         endpoint: env.BASE_PATH || LEGACY_MCP_ROUTE,
         transport: "streamable-http",
+        connect: connectUrl,
       });
     }
 

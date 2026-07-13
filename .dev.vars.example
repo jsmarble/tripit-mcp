@@ -1,15 +1,18 @@
 # Copy to .dev.vars for local development with `wrangler dev`.
 #
-# All values are OPTIONAL. Callers normally supply their own TripIt OAuth
-# credentials per-request via the X-TripIt-* headers, so nothing is stored
-# on the server.
+# All values are OPTIONAL. Callers normally supply their own TripIt
+# credentials per-request via the X-TripIt-* headers.
 
-# Optional fallback credentials for a private single-user deployment — all
-# four must be set together. Leave unset for a shared server where every
-# caller sends their own credentials. Mint access tokens once with
-# `npm run authorize -- <consumer_key> <consumer_secret>`.
-# TRIPIT_CONSUMER_KEY=your_consumer_key
-# TRIPIT_CONSUMER_SECRET=your_consumer_secret
+# This deployment's registered TripIt API application (register one at
+# https://www.tripit.com/developer). Enables the hosted /connect browser flow
+# and access-token-pair-only authentication.
+# TRIPIT_CONSUMER_KEY=your_app_consumer_key
+# TRIPIT_CONSUMER_SECRET=your_app_consumer_secret
+
+# Optional fallback access-token pair for a private single-user deployment
+# (requires the consumer values above too): keyless requests then act on this
+# TripIt account. Leave unset for a shared server. Mint a pair via the
+# /connect flow or `npm run authorize -- <consumer_key> <consumer_secret>`.
 # TRIPIT_ACCESS_TOKEN=your_access_token
 # TRIPIT_ACCESS_TOKEN_SECRET=your_access_token_secret
 

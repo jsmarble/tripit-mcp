@@ -7,11 +7,14 @@
  * Callers supply their own TripIt OAuth 1.0 credentials per-request via the
  * X-TripIt-* headers — nothing is stored on the server.
  *
- * Optional secrets (set with `wrangler secret put <NAME>`, all four required
- * together), only for a private single-user deployment where callers should
- * not need to send credentials:
- *   TRIPIT_CONSUMER_KEY, TRIPIT_CONSUMER_SECRET,
- *   TRIPIT_ACCESS_TOKEN, TRIPIT_ACCESS_TOKEN_SECRET
+ * Secrets (set with `wrangler secret put <NAME>`):
+ *   TRIPIT_CONSUMER_KEY, TRIPIT_CONSUMER_SECRET
+ *     This deployment's registered TripIt app (tripit.com/developer).
+ *     Enables the hosted /connect browser flow and lets callers send just an
+ *     access-token pair instead of all four values.
+ *   TRIPIT_ACCESS_TOKEN, TRIPIT_ACCESS_TOKEN_SECRET (optional)
+ *     Fallback pair for a private single-user deployment; leave unset on a
+ *     shared/public server.
  *
  * Optional vars (set below or in the dashboard) to restrict who can connect
  * via Cloudflare Access; while unset the server is public:

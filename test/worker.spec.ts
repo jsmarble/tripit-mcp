@@ -94,6 +94,10 @@ async function expectedSignature(
   url: string,
   oauthParams: Record<string, string>,
   bodyParams: Record<string, string>,
+  secrets: { consumerSecret: string; tokenSecret: string } = {
+    consumerSecret: "test-cs",
+    tokenSecret: "test-ats",
+  },
 ): Promise<string> {
   const parsed = new URL(url);
   const paramString = [
@@ -112,7 +116,9 @@ async function expectedSignature(
     percentEncode(`${parsed.origin}${parsed.pathname}`),
     percentEncode(paramString),
   ].join("&");
-  const signingKey = `${percentEncode("test-cs")}&${percentEncode("test-ats")}`;
+  const signingKey = `${percentEncode(secrets.consumerSecret)}&${percentEncode(
+    secrets.tokenSecret,
+  )}`;
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(signingKey),
@@ -186,7 +192,8 @@ describe("credential handling", () => {
     });
     expect(response.status).toBe(401);
     const body = await response.json<{ error: { message: string } }>();
-    expect(body.error.message).toContain("X-TripIt-Consumer-Key");
+    expect(body.error.message).toContain("/tripit/connect");
+    expect(body.error.message).toContain("X-TripIt-Access-Token");
   });
 
   it("rejects incomplete credential headers, naming the missing ones", async () => {
@@ -217,7 +224,7 @@ describe("credential handling", () => {
     expect(response.status).toBe(200);
   });
 
-  it("rejects a bearer token that is not four colon-separated values", async () => {
+  it("rejects a bearer token that is not two or four colon-separated values", async () => {
     const response = await SELF.fetch(MCP_URL, {
       method: "POST",
       headers: { ...JSON_HEADERS, Authorization: "Bearer just-one-value" },
@@ -225,7 +232,173 @@ describe("credential handling", () => {
     });
     expect(response.status).toBe(401);
     const body = await response.json<{ error: { message: string } }>();
-    expect(body.error.message).toContain("four colon-separated values");
+    expect(body.error.message).toContain("two colon-separated values");
+  });
+
+  it("accepts an access-token pair via headers, signed with the server's app", async () => {
+    let seenAuth: string | null = null;
+    let seenUrl: string | null = null;
+    server.use(
+      http.get("https://api.tripit.com/v1/get/profile/format/json", ({ request }) => {
+        seenAuth = request.headers.get("Authorization");
+        seenUrl = request.url;
+        return HttpResponse.json({ Profile: {} });
+      }),
+    );
+
+    const result = await callTool(
+      "tripit_get_profile",
+      {},
+      {
+        "X-TripIt-Access-Token": "user-at",
+        "X-TripIt-Access-Token-Secret": "user-ats",
+      },
+    );
+    expect(result.result.isError).toBeUndefined();
+
+    const oauth = parseOAuthHeader(seenAuth as unknown as string);
+    expect(oauth.oauth_consumer_key).toBe("server-ck");
+    expect(oauth.oauth_token).toBe("user-at");
+    expect(oauth.oauth_signature).toBe(
+      await expectedSignature(
+        "GET",
+        seenUrl as unknown as string,
+        oauth,
+        {},
+        {
+          consumerSecret: "server-cs",
+          tokenSecret: "user-ats",
+        },
+      ),
+    );
+  });
+
+  it("accepts an access-token pair via a two-part bearer token", async () => {
+    server.use(
+      http.get("https://api.tripit.com/v1/get/profile/format/json", () =>
+        HttpResponse.json({ Profile: {} }),
+      ),
+    );
+    const response = await SELF.fetch(MCP_URL, {
+      method: "POST",
+      headers: { ...JSON_HEADERS, Authorization: "Bearer user-at:user-ats" },
+      body: rpc("tools/list"),
+    });
+    expect(response.status).toBe(200);
+  });
+});
+
+describe("hosted connect flow", () => {
+  it("serves the connect page under the base path and legacy path", async () => {
+    for (const path of ["/tripit/connect", "/connect"]) {
+      const response = await SELF.fetch(`https://example.com${path}`);
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain("Connect your TripIt account");
+      expect(html).toContain("tripit.com/developer");
+    }
+  });
+
+  it("runs the full authorize round-trip and shows the minted tokens", async () => {
+    let requestTokenBody: string | null = null;
+    let accessTokenBody: string | null = null;
+    server.use(
+      http.post("https://api.tripit.com/oauth/request_token", async ({ request }) => {
+        requestTokenBody = await request.text();
+        return HttpResponse.text("oauth_token=rt-token&oauth_token_secret=rt-secret");
+      }),
+      http.post("https://api.tripit.com/oauth/access_token", async ({ request }) => {
+        accessTokenBody = await request.text();
+        return HttpResponse.text(
+          "oauth_token=minted-token&oauth_token_secret=minted-secret",
+        );
+      }),
+    );
+
+    // Step 1+2: /start gets a request token and redirects to TripIt.
+    const start = await SELF.fetch("https://example.com/tripit/connect/start", {
+      method: "POST",
+      redirect: "manual",
+    });
+    expect(start.status).toBe(302);
+    const location = new URL(start.headers.get("Location") ?? "");
+    expect(location.origin).toBe("https://www.tripit.com");
+    expect(location.pathname).toBe("/oauth/authorize");
+    expect(location.searchParams.get("oauth_token")).toBe("rt-token");
+    expect(location.searchParams.get("oauth_callback")).toBe(
+      "https://example.com/tripit/connect/callback",
+    );
+    const startParams = new URLSearchParams(requestTokenBody as unknown as string);
+    expect(startParams.get("oauth_consumer_key")).toBe("server-ck");
+
+    const cookie = (start.headers.get("Set-Cookie") ?? "").split(";")[0];
+    expect(cookie).toContain("tripit_connect=");
+
+    // Step 3: TripIt sends the user back; we exchange for an access token.
+    const callback = await SELF.fetch(
+      "https://example.com/tripit/connect/callback?oauth_token=rt-token",
+      { headers: { Cookie: cookie } },
+    );
+    expect(callback.status).toBe(200);
+    const html = await callback.text();
+    expect(html).toContain("minted-token");
+    expect(html).toContain("minted-secret");
+    expect(html).toContain("Bearer minted-token:minted-secret");
+    expect(html).toContain("https://example.com/tripit");
+
+    const exchangeParams = new URLSearchParams(accessTokenBody as unknown as string);
+    expect(exchangeParams.get("oauth_token")).toBe("rt-token");
+    expect(exchangeParams.get("oauth_token_secret")).toBe("rt-secret");
+    expect(exchangeParams.get("oauth_consumer_key")).toBe("server-ck");
+    expect(exchangeParams.get("oauth_signature")).toBeTruthy();
+
+    // The one-shot state cookie is cleared.
+    expect(callback.headers.get("Set-Cookie")).toContain("Max-Age=0");
+  });
+
+  it("uses custom app credentials from the advanced form", async () => {
+    server.use(
+      http.post("https://api.tripit.com/oauth/request_token", async ({ request }) => {
+        const params = new URLSearchParams(await request.text());
+        expect(params.get("oauth_consumer_key")).toBe("my-own-ck");
+        return HttpResponse.text("oauth_token=rt2&oauth_token_secret=rts2");
+      }),
+      http.post("https://api.tripit.com/oauth/access_token", () =>
+        HttpResponse.text("oauth_token=at2&oauth_token_secret=ats2"),
+      ),
+    );
+
+    const form = new URLSearchParams({
+      consumer_key: "my-own-ck",
+      consumer_secret: "my-own-cs",
+    });
+    const start = await SELF.fetch("https://example.com/tripit/connect/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+      redirect: "manual",
+    });
+    expect(start.status).toBe(302);
+    const cookie = (start.headers.get("Set-Cookie") ?? "").split(";")[0];
+
+    const callback = await SELF.fetch(
+      "https://example.com/tripit/connect/callback?oauth_token=rt2",
+      { headers: { Cookie: cookie } },
+    );
+    expect(callback.status).toBe(200);
+    const html = await callback.text();
+    // Bring-your-own-app flow shows all four values.
+    expect(html).toContain("my-own-ck");
+    expect(html).toContain("X-TripIt-Consumer-Secret");
+    expect(html).toContain("Bearer my-own-ck:my-own-cs:at2:ats2");
+  });
+
+  it("rejects a callback without a valid state cookie", async () => {
+    const response = await SELF.fetch(
+      "https://example.com/tripit/connect/callback?oauth_token=rt-token",
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("expired");
   });
 });
 

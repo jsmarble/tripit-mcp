@@ -4,49 +4,30 @@
 
 A public, remote [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server for the [TripIt](https://www.tripit.com) travel management API, running on [Cloudflare Workers](https://developers.cloudflare.com/workers/). It lets AI assistants like Claude read and manage your TripIt trips — list and inspect trips, add flights/hotels/cars/activities, check flight status, and view loyalty program balances.
 
-Anyone can connect. **You bring your own TripIt OAuth credentials**: the server stores no credentials, requires no login, and simply signs each TripIt request with the values you send. Unlike an API key, TripIt uses OAuth 1.0, so there are four values — but its access tokens never expire, so you mint them once (see [Getting credentials](#getting-your-tripit-credentials)).
+Anyone can connect, and **no OAuth knowledge is required**: open **[mcp.joshuamarble.io/tripit/connect](https://mcp.joshuamarble.io/tripit/connect)**, sign in to TripIt, and the page hands you your credentials plus ready-made client configs. The server stores nothing — TripIt's OAuth 1.0 tokens never expire, are shown only to you at the end of the flow, and are used per-request to sign your TripIt calls.
 
-> **You need a (free) TripIt developer API key** from [tripit.com/developer](https://www.tripit.com/developer). Real-time flight status and loyalty-program data additionally require the TripIt account to have **TripIt Pro**; everything else works on free accounts.
+> Real-time flight status and loyalty-program data require the TripIt account to have **TripIt Pro**; everything else works on free accounts.
 
 Built on the stateless [`createMcpHandler()`](https://developers.cloudflare.com/agents/model-context-protocol/guides/remote-mcp-server/) pattern from the Cloudflare Agents SDK — Streamable HTTP transport, no Durable Objects, no KV, no per-session state.
 
 ## Using the server
 
-You need two things:
-
-1. **The server URL** — `https://mcp.joshuamarble.io/tripit` (or `https://tripit-mcp.tolvit-llc.workers.dev/mcp` as a fallback; see [Self-hosting](#self-hosting) to deploy your own)
-2. **Your four TripIt OAuth values** — sent as HTTP headers on every request
-
-Your MCP client must support custom headers on remote servers. Either form works:
+1. **Get credentials**: visit [`https://mcp.joshuamarble.io/tripit/connect`](https://mcp.joshuamarble.io/tripit/connect), click **Connect your TripIt account**, and sign in on tripit.com. The success page shows your **access token** and **access token secret** — plus copy-paste-ready configs for Claude Code and Claude Desktop with the values already filled in.
+2. **Connect your MCP client** to `https://mcp.joshuamarble.io/tripit` with those values as headers (your client must support custom headers on remote servers):
 
 | Header | Format | Notes |
 |--------|--------|-------|
-| `X-TripIt-Consumer-Key` | `<consumer key>` | All four `X-TripIt-*` headers together (preferred) |
-| `X-TripIt-Consumer-Secret` | `<consumer secret>` | |
-| `X-TripIt-Access-Token` | `<access token>` | |
+| `X-TripIt-Access-Token` | `<access token>` | Both `X-TripIt-Access-Token*` headers together |
 | `X-TripIt-Access-Token-Secret` | `<access token secret>` | |
-| `Authorization` | `Bearer <ck>:<cs>:<at>:<ats>` | Single-header alternative: the four values colon-joined |
+| `Authorization` | `Bearer <access_token>:<access_token_secret>` | Single-header alternative |
 
-Requests without credentials get a `401` with instructions. The values are used to sign the one TripIt request and are never logged or stored.
-
-### Getting your TripIt credentials
-
-1. Request an API key at [tripit.com/developer](https://www.tripit.com/developer) → you get a **consumer key** and **consumer secret**.
-2. Mint your **access token** and **access token secret** once (they never expire unless revoked):
-
-```bash
-git clone https://github.com/jsmarble/tripit-mcp && cd tripit-mcp
-node scripts/authorize.mjs YOUR_CONSUMER_KEY YOUR_CONSUMER_SECRET
-# opens a TripIt authorization URL; approve it, and the script prints all four values
-```
-
-Keep all four values secret — together they grant full access to your TripIt account.
+Requests without credentials get a `401` with instructions. Credentials are used to sign the one TripIt request and are never logged or stored; revoke the connection anytime in your TripIt account settings and reconnect for fresh tokens.
 
 ### Claude Code
 
 ```bash
 claude mcp add --transport http tripit https://mcp.joshuamarble.io/tripit \
-  --header "Authorization: Bearer CONSUMER_KEY:CONSUMER_SECRET:ACCESS_TOKEN:ACCESS_TOKEN_SECRET"
+  --header "Authorization: Bearer ACCESS_TOKEN:ACCESS_TOKEN_SECRET"
 ```
 
 ### Claude Desktop (and other clients without native remote MCP support)
@@ -60,7 +41,7 @@ Via [`mcp-remote`](https://www.npmjs.com/package/mcp-remote), in `claude_desktop
       "command": "npx",
       "args": [
         "mcp-remote", "https://mcp.joshuamarble.io/tripit",
-        "--header", "Authorization: Bearer CONSUMER_KEY:CONSUMER_SECRET:ACCESS_TOKEN:ACCESS_TOKEN_SECRET"
+        "--header", "Authorization: Bearer ACCESS_TOKEN:ACCESS_TOKEN_SECRET"
       ]
     }
   }
@@ -72,10 +53,21 @@ Via [`mcp-remote`](https://www.npmjs.com/package/mcp-remote), in `claude_desktop
 ```bash
 npx @modelcontextprotocol/inspector@latest
 # Transport: Streamable HTTP → https://mcp.joshuamarble.io/tripit
-# Add the four X-TripIt-* headers (or the Authorization bearer header)
+# Add the two X-TripIt-Access-Token* headers (or the Authorization bearer header)
 ```
 
 A quick liveness check needs no credentials: `curl https://mcp.joshuamarble.io/tripit/health`
+
+### Advanced: bring your own TripIt app
+
+The access-token pair above is bound to this deployment's registered TripIt application (the server signs requests with its consumer key). To be fully independent, register your own application at [tripit.com/developer](https://www.tripit.com/developer) and either use the **advanced form** on the [connect page](https://mcp.joshuamarble.io/tripit/connect) or mint tokens locally:
+
+```bash
+git clone https://github.com/jsmarble/tripit-mcp && cd tripit-mcp
+node scripts/authorize.mjs YOUR_CONSUMER_KEY YOUR_CONSUMER_SECRET
+```
+
+Then send **all four** values: `X-TripIt-Consumer-Key`, `X-TripIt-Consumer-Secret`, `X-TripIt-Access-Token`, `X-TripIt-Access-Token-Secret` headers (or `Authorization: Bearer <ck>:<cs>:<at>:<ats>`). Four-value requests are signed entirely with your app — the deployment's app is not involved. Keep all four secret; together they grant full access to your TripIt account.
 
 ### Things to ask once connected
 
@@ -134,7 +126,8 @@ All configuration is optional:
 
 | Setting | Where | Effect |
 |---------|-------|--------|
-| `TRIPIT_CONSUMER_KEY`, `TRIPIT_CONSUMER_SECRET`, `TRIPIT_ACCESS_TOKEN`, `TRIPIT_ACCESS_TOKEN_SECRET` | secrets (`wrangler secret put`) or `.dev.vars` | Fallback credentials used when a request has no credential headers — for private single-user deployments; all four must be set together. **Leave unset on a shared/public server** (otherwise anonymous callers would act on your TripIt account). Caller headers always take precedence. |
+| `TRIPIT_CONSUMER_KEY` + `TRIPIT_CONSUMER_SECRET` | secrets (`wrangler secret put`) or `.dev.vars` | The deployment's registered TripIt application ([register one](https://www.tripit.com/developer)). Enables the one-click `/connect` flow and lets callers authenticate with just an access-token pair. Without them, callers must bring their own app (four values), and `/connect` only offers the advanced form. |
+| `TRIPIT_ACCESS_TOKEN` + `TRIPIT_ACCESS_TOKEN_SECRET` | secrets or `.dev.vars` | Fallback access-token pair (used with the consumer secrets above) for private single-user deployments: keyless requests then act on that TripIt account. **Leave unset on a shared/public server.** Caller headers always take precedence. |
 | `ACCESS_TEAM_DOMAIN` + `ACCESS_APP_AUD` | `wrangler.jsonc` → `vars` | When **both** are set, every MCP request must carry a valid Cloudflare Access JWT. While unset — the default — the server is public. |
 
 ### Optional: restrict who can connect (Cloudflare Access)
@@ -144,18 +137,23 @@ The server is open by default; the only thing a credential-less caller can consu
 ## Architecture
 
 ```
+Browser ──▶ /tripit/connect ── OAuth 1.0 dance with tripit.com ──▶ shows the
+            (state rides in an AES-GCM-sealed 10-min cookie)       user their tokens
+
 MCP client ──HTTPS──▶ Worker (/tripit or /mcp)
-(sends own OAuth       ├─ (optional) validates Cloudflare Access JWT
- credentials)          ├─ reads the caller's X-TripIt-* headers (401 if missing)
-                       ├─ createMcpHandler() → McpServer (fresh per request)
-                       └─ TripIt API v1 (OAuth 1.0 HMAC-SHA1 signed per request)
+(sends token pair      ├─ (optional) validates Cloudflare Access JWT
+ or full four          ├─ reads the caller's X-TripIt-* headers (401 if missing)
+ values)               ├─ createMcpHandler() → McpServer (fresh per request)
+                       └─ TripIt API v1 (OAuth 1.0 HMAC-SHA1 signed per request;
+                          token-pair requests are signed with the deployment's app)
 ```
 
 - [src/index.ts](src/index.ts) — Worker entry: routes, per-request credential resolution
+- [src/connect.ts](src/connect.ts) — hosted OAuth flow: connect page, TripIt redirect, callback that shows the minted tokens; stateless via a sealed short-lived cookie
 - [src/server.ts](src/server.ts) — MCP server and 16 tool definitions (zod-validated inputs, honest annotations)
 - [src/tripit-client.ts](src/tripit-client.ts) — TripIt API client with a Web Crypto OAuth 1.0 HMAC-SHA1 signer (form-body params included in the signature base string, as the spec requires), request timeouts, and distinct 401/404/429 errors
 - [src/access.ts](src/access.ts) — optional Cloudflare Access JWT validation (jose, JWKS cached per isolate)
-- [scripts/authorize.mjs](scripts/authorize.mjs) — one-time local helper to mint access tokens (dependency-free Node)
+- [scripts/authorize.mjs](scripts/authorize.mjs) — CLI alternative to the hosted flow for own-app users (dependency-free Node)
 
 ### Development commands
 
@@ -186,6 +184,7 @@ While `CLOUDFLARE_API_TOKEN` is unset the deploy job is skipped (quality gates s
 ## Privacy
 
 - OAuth credentials are read from the request, used to sign the one TripIt API call over HTTPS, and never stored or logged by this server.
+- The `/connect` flow is stateless too: the in-flight request-token secret lives only in an encrypted, HttpOnly, 10-minute cookie in your browser, and the minted tokens appear once, in your browser, and nowhere else.
 - No travel data is persisted; the server is stateless and holds nothing between requests.
 - Workers observability is enabled for operational logs (request metadata); credential headers are not written to logs by the application.
 

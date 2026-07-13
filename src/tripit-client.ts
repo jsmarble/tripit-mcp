@@ -26,7 +26,7 @@ export class TripItApiError extends Error {
 
 // RFC 3986 percent-encoding as required by the OAuth 1.0 signature spec
 // (encodeURIComponent leaves !'()* unescaped).
-function percentEncode(value: string): string {
+export function percentEncode(value: string): string {
   return encodeURIComponent(value).replace(
     /[!'()*]/g,
     (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
@@ -46,25 +46,38 @@ async function hmacSha1(key: string, message: string): Promise<string> {
   return btoa(String.fromCharCode(...new Uint8Array(signature)));
 }
 
+/** The subset of OAuth 1.0 credentials needed to sign a request; token is
+ * absent on the request-token step of the authorization flow. */
+export interface OAuthSigner {
+  consumerKey: string;
+  consumerSecret: string;
+  token?: string;
+  tokenSecret?: string;
+}
+
 /**
- * Builds an OAuth 1.0 HMAC-SHA1 Authorization header for one request.
- * `bodyParams` must contain any application/x-www-form-urlencoded POST body
- * parameters — the OAuth spec includes them in the signature base string.
+ * Computes the full OAuth 1.0 HMAC-SHA1 parameter set (including
+ * oauth_signature) for one request. `extraOAuthParams` are additional
+ * oauth_* protocol parameters (e.g. oauth_token_secret on TripIt's
+ * access-token exchange); `bodyParams` are application/x-www-form-urlencoded
+ * POST body parameters — the OAuth spec includes both in the signature base.
  */
-export async function buildOAuthHeader(
+export async function signOAuthParams(
   method: string,
   url: string,
-  credentials: TripItCredentials,
+  signer: OAuthSigner,
+  extraOAuthParams: Record<string, string> = {},
   bodyParams: Record<string, string> = {},
-): Promise<string> {
+): Promise<Record<string, string>> {
   const parsed = new URL(url);
   const oauthParams: Record<string, string> = {
-    oauth_consumer_key: credentials.consumerKey,
+    oauth_consumer_key: signer.consumerKey,
     oauth_nonce: crypto.randomUUID().replaceAll("-", ""),
     oauth_signature_method: "HMAC-SHA1",
     oauth_timestamp: String(Math.floor(Date.now() / 1000)),
-    oauth_token: credentials.accessToken,
     oauth_version: "1.0",
+    ...(signer.token ? { oauth_token: signer.token } : {}),
+    ...extraOAuthParams,
   };
 
   const paramString = [
@@ -85,12 +98,38 @@ export async function buildOAuthHeader(
     percentEncode(paramString),
   ].join("&");
 
-  const signingKey = `${percentEncode(credentials.consumerSecret)}&${percentEncode(
-    credentials.accessTokenSecret,
+  const signingKey = `${percentEncode(signer.consumerSecret)}&${percentEncode(
+    signer.tokenSecret ?? "",
   )}`;
   const signature = await hmacSha1(signingKey, baseString);
 
-  const header = Object.entries({ ...oauthParams, oauth_signature: signature })
+  return { ...oauthParams, oauth_signature: signature };
+}
+
+/**
+ * Builds an OAuth 1.0 HMAC-SHA1 Authorization header for one API request.
+ * `bodyParams` must contain any application/x-www-form-urlencoded POST body
+ * parameters — the OAuth spec includes them in the signature base string.
+ */
+export async function buildOAuthHeader(
+  method: string,
+  url: string,
+  credentials: TripItCredentials,
+  bodyParams: Record<string, string> = {},
+): Promise<string> {
+  const params = await signOAuthParams(
+    method,
+    url,
+    {
+      consumerKey: credentials.consumerKey,
+      consumerSecret: credentials.consumerSecret,
+      token: credentials.accessToken,
+      tokenSecret: credentials.accessTokenSecret,
+    },
+    {},
+    bodyParams,
+  );
+  const header = Object.entries(params)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, value]) => `${key}="${percentEncode(value)}"`)
     .join(", ");

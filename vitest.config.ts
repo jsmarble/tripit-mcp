@@ -5,6 +5,13 @@ export default defineConfig({
   plugins: [
     cloudflareTest({
       wrangler: { configPath: "./wrangler.jsonc" },
+      miniflare: {
+        // Test stand-ins for the deployment's registered TripIt app secrets.
+        bindings: {
+          TRIPIT_CONSUMER_KEY: "server-ck",
+          TRIPIT_CONSUMER_SECRET: "server-cs",
+        },
+      },
     }),
   ],
   test: {
