@@ -2,15 +2,25 @@
 
 [![CI / Deploy](https://github.com/jsmarble/tripit-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/jsmarble/tripit-mcp/actions/workflows/ci.yml)
 
-A public, remote [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server for the [TripIt](https://www.tripit.com) travel management API, running on [Cloudflare Workers](https://developers.cloudflare.com/workers/). It lets AI assistants like Claude read and manage your TripIt trips — list and inspect trips, add flights/hotels/cars/activities, check flight status, and view loyalty program balances.
+A remote [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server for the [TripIt](https://www.tripit.com) travel management API, running on [Cloudflare Workers](https://developers.cloudflare.com/workers/). It lets AI assistants like Claude read and manage TripIt trips — list and inspect trips, add flights/hotels/cars/activities, check flight status, and view loyalty program balances.
 
-Anyone can connect, and **no OAuth knowledge is required**: open **[mcp.joshuamarble.io/tripit/connect](https://mcp.joshuamarble.io/tripit/connect)**, sign in to TripIt, and the page hands you your credentials plus ready-made client configs. The server stores nothing — TripIt's OAuth 1.0 tokens never expire, are shown only to you at the end of the flow, and are used per-request to sign your TripIt calls.
+> ## ⚠️ Parked: TripIt closed its public API to new integrations
+>
+> As of early 2026, **TripIt no longer issues API credentials**. Per TripIt's own [support article](https://help.tripit.com/en/support/solutions/articles/103000391296-tripit-public-api) (Feb 2026): *"The TripIt public API is no longer available for new integrations. Existing API connections will continue to function normally."* The developer registration page (`tripit.com/developer/create`) has been taken down, and TripIt support has [confirmed](https://github.com/tripit/api/issues/288) they are not issuing new consumer keys.
+>
+> **What this means:** this server is built on TripIt's OAuth 1.0 API, which requires a consumer key/secret that **can no longer be obtained**. It remains fully functional **only for holders of a legacy (pre-2026) consumer key** — if you have one, set it as described under [Advanced: bring your own TripIt app](#advanced-bring-your-own-tripit-app) and everything below works. For everyone else, there is currently no supported way to get credentials, so the project is **parked as a reference implementation**.
+>
+> The only known way to reach TripIt data for a *new* user today is to impersonate the mobile app's OAuth 2.0 client with a username/password login (see [`dvcrn/mcp-server-tripit`](https://github.com/dvcrn/mcp-server-tripit)) — a reverse-engineered, unofficial approach this project deliberately does **not** adopt.
+
+This code is a clean, tested [`createMcpHandler()`](https://developers.cloudflare.com/agents/model-context-protocol/guides/remote-mcp-server/) implementation (Streamable HTTP transport, no Durable Objects, no KV, no per-session state, bring-your-own-credentials). The rest of this README describes how it works for the legacy-key case.
 
 > Real-time flight status and loyalty-program data require the TripIt account to have **TripIt Pro**; everything else works on free accounts.
 
 Built on the stateless [`createMcpHandler()`](https://developers.cloudflare.com/agents/model-context-protocol/guides/remote-mcp-server/) pattern from the Cloudflare Agents SDK — Streamable HTTP transport, no Durable Objects, no KV, no per-session state.
 
 ## Using the server
+
+> The one-click `/connect` flow below requires the **deployment** to hold a legacy TripIt consumer key (the `TRIPIT_CONSUMER_KEY`/`TRIPIT_CONSUMER_SECRET` secrets). Since new keys can no longer be issued (see the notice above), on a deployment without one, `/connect` shows only the advanced bring-your-own-app form — which itself needs a legacy key.
 
 1. **Get credentials**: visit [`https://mcp.joshuamarble.io/tripit/connect`](https://mcp.joshuamarble.io/tripit/connect), click **Connect your TripIt account**, and sign in on tripit.com. The success page shows your **access token** and **access token secret** — plus copy-paste-ready configs for Claude Code and Claude Desktop with the values already filled in.
 2. **Connect your MCP client** to `https://mcp.joshuamarble.io/tripit` with those values as headers (your client must support custom headers on remote servers):
